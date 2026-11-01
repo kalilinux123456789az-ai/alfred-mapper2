@@ -59,4 +59,12 @@
     <string name="ble_not_available">Bluetooth LE scanner unavailable; trying classic Bluetooth.</string>
     <string name="bluetooth_scan_unavailable">Bluetooth scanning is unavailable. Restart Bluetooth and try again.</string>
     <string name="classic_scan_unavailable">Classic Bluetooth scan could not start; BLE scan remains active.</string>
+    <string name="calibration_title_wifi">Calibrate Wi-Fi distance</string>
+    <string name="calibration_title_bluetooth">Calibrate Bluetooth distance</string>
+    <string name="calibration_instructions">Measure a device at a known distance, then enter its RSSI reading. Use the same device and radio type for best results.</string>
+    <string name="calibration_distance_label">Known distance (meters)</string>
+    <string name="calibration_rssi_label">RSSI at that distance (dBm)</string>
+    <string name="calibration_exponent_label">Environment factor (1–6; open 2, indoor 3)</string>
+    <string name="calibration_save">Save calibration</string>
+    <string name="calibration_invalid">Enter distance greater than 0 and at most 1000 m, RSSI -120–0 dBm, and environment factor 1–6.</string>
 </resources>
