@@ -2,6 +2,7 @@ package com.alfredmapper2;
 
 import android.annotation.SuppressLint;
 import android.Manifest;
+import android.app.AlertDialog;
 import android.app.Activity;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
@@ -19,9 +20,11 @@ import android.os.IBinder;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -32,6 +35,10 @@ import java.util.Map;
 
 public final class MainActivity extends Activity {
     private static final int REQUEST_PERMISSIONS = 100;
+    private static final String DISTANCE_PREFERENCES = "distance_calibration";
+    private static final String REFERENCE_RSSI_KEY = "reference_rssi";
+    private static final String REFERENCE_DISTANCE_KEY = "reference_distance";
+    private static final String PATH_LOSS_KEY = "path_loss_exponent";
     private static final int COLOR_BACKGROUND = Color.rgb(8, 8, 8);
     private static final int COLOR_CARD = Color.rgb(24, 12, 12);
     private static final int COLOR_TEXT = Color.rgb(255, 75, 75);
@@ -239,12 +246,17 @@ public final class MainActivity extends Activity {
         renderItems(bluetoothList, bluetoothItems, false);
 
         TextView note = text(
-                "> DISTANCE IS AN APPROXIMATE RSSI ESTIMATE, NOT EXACT",
+                "> RSSI DISTANCE IS AN ESTIMATE. CALIBRATE AT A KNOWN DISTANCE.",
                 11,
                 COLOR_MUTED,
                 false);
         note.setPadding(0, dp(18), 0, dp(6));
         root.addView(note);
+        Button calibrateDistanceButton = button(
+                "[ CALIBRATE DISTANCE ]", COLOR_CARD, COLOR_ACCENT);
+        calibrateDistanceButton.setOnClickListener(v -> showDistanceCalibration());
+        root.addView(calibrateDistanceButton, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
         updateModeViews();
     }
 
@@ -495,7 +507,7 @@ public final class MainActivity extends Activity {
             String signal = wifi
                     ? item.signalPercent + "% signal · " + item.rssi + " dBm"
                     : item.rssi + " dBm RSSI";
-            card.addView(text(signal + " · " + estimateDistance(item.rssi),
+            card.addView(text(signal + " · " + estimateDistance(item.rssi, wifi),
                     12, COLOR_ACCENT, false));
             card.addView(text(wifi ? item.detail + " · " + item.key : item.key,
                     11, COLOR_MUTED, false));
@@ -506,9 +518,122 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private String estimateDistance(int rssi) {
+    private String estimateDistance(int rssi, boolean wifi) {
+        android.content.SharedPreferences preferences = distancePreferences();
+        int referenceRssi = preferences.getInt(
+                distancePreferenceKey(REFERENCE_RSSI_KEY, wifi),
+                DistanceEstimator.DEFAULT_REFERENCE_RSSI_DBM);
+        double referenceDistance = Double.longBitsToDouble(preferences.getLong(
+                distancePreferenceKey(REFERENCE_DISTANCE_KEY, wifi),
+                Double.doubleToRawLongBits(DistanceEstimator.DEFAULT_REFERENCE_DISTANCE_METERS)));
+        double pathLossExponent = Double.longBitsToDouble(preferences.getLong(
+                distancePreferenceKey(PATH_LOSS_KEY, wifi),
+                Double.doubleToRawLongBits(DistanceEstimator.DEFAULT_PATH_LOSS_EXPONENT)));
+        double distance = DistanceEstimator.estimateMeters(
+                rssi, referenceRssi, referenceDistance, pathLossExponent);
         return String.format(
-                Locale.getDefault(), "≈ %.2f m (estimate)", Math.pow(10.0, (-59.0 - rssi) / 22.0));
+                Locale.getDefault(), "≈ %.2f m (estimate)", distance);
+    }
+
+    private void showDistanceCalibration() {
+        boolean wifi = currentMode == RadioScanService.MODE_WIFI;
+        android.content.SharedPreferences preferences = distancePreferences();
+        String referenceRssiKey = distancePreferenceKey(REFERENCE_RSSI_KEY, wifi);
+        String referenceDistanceKey = distancePreferenceKey(REFERENCE_DISTANCE_KEY, wifi);
+        String pathLossKey = distancePreferenceKey(PATH_LOSS_KEY, wifi);
+        int referenceRssi = preferences.getInt(
+                referenceRssiKey, DistanceEstimator.DEFAULT_REFERENCE_RSSI_DBM);
+        double referenceDistance = Double.longBitsToDouble(preferences.getLong(
+                referenceDistanceKey,
+                Double.doubleToRawLongBits(DistanceEstimator.DEFAULT_REFERENCE_DISTANCE_METERS)));
+        double pathLossExponent = Double.longBitsToDouble(preferences.getLong(
+                pathLossKey,
+                Double.doubleToRawLongBits(DistanceEstimator.DEFAULT_PATH_LOSS_EXPONENT)));
+
+        LinearLayout form = new LinearLayout(this);
+        form.setOrientation(LinearLayout.VERTICAL);
+        form.setPadding(dp(24), dp(12), dp(24), 0);
+        EditText distanceInput = calibrationInput(
+                String.format(Locale.getDefault(), "%.2f", referenceDistance),
+                android.text.InputType.TYPE_CLASS_NUMBER
+                        | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        EditText rssiInput = calibrationInput(
+                Integer.toString(referenceRssi),
+                android.text.InputType.TYPE_CLASS_NUMBER
+                        | android.text.InputType.TYPE_NUMBER_FLAG_SIGNED);
+        EditText exponentInput = calibrationInput(
+                String.format(Locale.getDefault(), "%.1f", pathLossExponent),
+                android.text.InputType.TYPE_CLASS_NUMBER
+                        | android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        addCalibrationField(form, getString(R.string.calibration_distance_label), distanceInput);
+        addCalibrationField(form, getString(R.string.calibration_rssi_label), rssiInput);
+        addCalibrationField(form, getString(R.string.calibration_exponent_label), exponentInput);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(wifi
+                        ? R.string.calibration_title_wifi
+                        : R.string.calibration_title_bluetooth)
+                .setMessage(R.string.calibration_instructions)
+                .setView(form)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.calibration_save, null)
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                .setOnClickListener(v -> {
+                    try {
+                        double distance = Double.parseDouble(
+                                normalizeDecimal(distanceInput.getText().toString()));
+                        int rssi = Integer.parseInt(rssiInput.getText().toString().trim());
+                        double exponent = Double.parseDouble(
+                                normalizeDecimal(exponentInput.getText().toString()));
+                        if (Double.isNaN(distance) || Double.isInfinite(distance)
+                                || distance <= 0 || distance > 1000
+                                || rssi < -120 || rssi > 0
+                                || Double.isNaN(exponent) || Double.isInfinite(exponent)
+                                || exponent < 1 || exponent > 6) {
+                            throw new IllegalArgumentException();
+                        }
+                        preferences.edit()
+                                .putInt(referenceRssiKey, rssi)
+                                .putLong(referenceDistanceKey,
+                                        Double.doubleToRawLongBits(distance))
+                                .putLong(pathLossKey,
+                                        Double.doubleToRawLongBits(exponent))
+                                .apply();
+                        renderItems(wifiList, wifiItems, true);
+                        renderItems(bluetoothList, bluetoothItems, false);
+                        dialog.dismiss();
+                    } catch (IllegalArgumentException exception) {
+                        Toast.makeText(
+                                this, R.string.calibration_invalid, Toast.LENGTH_SHORT).show();
+                    }
+                }));
+        dialog.show();
+    }
+
+    private android.content.SharedPreferences distancePreferences() {
+        return getSharedPreferences(DISTANCE_PREFERENCES, MODE_PRIVATE);
+    }
+
+    private String distancePreferenceKey(String key, boolean wifi) {
+        return (wifi ? "wifi_" : "bluetooth_") + key;
+    }
+
+    private EditText calibrationInput(String value, int inputType) {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setInputType(inputType);
+        input.setText(value);
+        return input;
+    }
+
+    private String normalizeDecimal(String value) {
+        return value.trim().replace(',', '.');
+    }
+
+    private void addCalibrationField(LinearLayout form, String label, EditText input) {
+        form.addView(text(label, 12, COLOR_TEXT, false));
+        form.addView(input);
     }
 
     private void addEmptyState(LinearLayout container, String message) {

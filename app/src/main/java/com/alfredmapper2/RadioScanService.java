@@ -23,6 +23,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.location.LocationManager;
 
@@ -54,6 +55,7 @@ public final class RadioScanService extends Service {
     private static final String CHANNEL_ID = "radio_scan";
     private static final int NOTIFICATION_ID = 24;
     private static final long REFRESH_INTERVAL_MS = 1000;
+    private static final long RESULT_UPDATE_INTERVAL_MS = 30;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<String, Device> devices = new HashMap<>();
@@ -70,6 +72,7 @@ public final class RadioScanService extends Service {
     private boolean active;
     private boolean bluetoothWarning;
     private boolean classicDiscoveryStarted;
+    private boolean bluetoothUpdatePending;
     private int mode = MODE_NONE;
     private int status = R.string.ready;
     private int statusCount = -1;
@@ -82,13 +85,15 @@ public final class RadioScanService extends Service {
         String detail;
         int rssi;
         int signal;
+        long lastSeenAt;
 
-        Device(String key, String name, int rssi, String detail, int signal) {
+        Device(String key, String name, int rssi, String detail, int signal, long lastSeenAt) {
             this.key = key;
             this.name = name;
             this.rssi = rssi;
             this.detail = detail;
             this.signal = signal;
+            this.lastSeenAt = lastSeenAt;
         }
     }
 
@@ -101,6 +106,7 @@ public final class RadioScanService extends Service {
                     stopWithStatus(R.string.bluetooth_permission_denied);
                     return;
                 }
+                pruneBluetoothDevices();
                 startClassicDiscovery();
                 if (!bluetoothWarning) {
                     status = R.string.bluetooth_scan_active_count;
@@ -116,6 +122,14 @@ public final class RadioScanService extends Service {
                 publishUpdate();
             }
             if (active) handler.postDelayed(this, REFRESH_INTERVAL_MS);
+        }
+    };
+
+    private final Runnable bluetoothUpdateTask = new Runnable() {
+        @Override
+        public void run() {
+            bluetoothUpdatePending = false;
+            if (active && mode == MODE_BLUETOOTH) publishUpdate();
         }
     };
 
@@ -287,7 +301,8 @@ public final class RadioScanService extends Service {
                         name,
                         result.level,
                         result.capabilities == null ? "Wi-Fi" : result.capabilities,
-                        WifiManager.calculateSignalLevel(result.level, 100)));
+                        WifiManager.calculateSignalLevel(result.level, 100),
+                        SystemClock.elapsedRealtime()));
             }
             devices.clear();
             devices.putAll(latest);
@@ -363,17 +378,38 @@ public final class RadioScanService extends Service {
 
     private void addBluetooth(String address, String name, int rssi, long token) {
         if (!scanSession.accepts(token) || !active || mode != MODE_BLUETOOTH) return;
+        long now = SystemClock.elapsedRealtime();
+        pruneBluetoothDevices(now);
         Device existing = devices.get(address);
         String safeName = name == null || name.trim().isEmpty()
                 ? getString(R.string.unnamed_device) : name.trim();
         if (existing == null) {
-            devices.put(address, new Device(address, safeName, rssi, "Bluetooth", -1));
+            devices.put(address, new Device(address, safeName, rssi, "Bluetooth", -1, now));
         } else {
             if (existing.name.startsWith("<") && !safeName.startsWith("<")) {
                 existing.name = safeName;
             }
             existing.rssi = rssi;
+            existing.lastSeenAt = now;
         }
+        pruneBluetoothDevices(now);
+        if (!bluetoothUpdatePending) {
+            bluetoothUpdatePending = true;
+            handler.postDelayed(bluetoothUpdateTask, RESULT_UPDATE_INTERVAL_MS);
+        }
+    }
+
+    private void pruneBluetoothDevices() {
+        pruneBluetoothDevices(SystemClock.elapsedRealtime());
+    }
+
+    private void pruneBluetoothDevices(long now) {
+        ScanResultRetention.prune(
+                devices,
+                now,
+                ScanResultRetention.MAX_BLUETOOTH_RESULTS,
+                ScanResultRetention.BLUETOOTH_RESULT_MAX_AGE_MS,
+                device -> device.lastSeenAt);
     }
 
     private void startClassicDiscovery() {
@@ -483,6 +519,8 @@ public final class RadioScanService extends Service {
         active = false;
         scanSession.stop();
         handler.removeCallbacks(refreshTask);
+        handler.removeCallbacks(bluetoothUpdateTask);
+        bluetoothUpdatePending = false;
         wifiScanPending = false;
         try {
             if (bleScanner != null && bleCallback != null && hasBluetoothPermissions()) {
