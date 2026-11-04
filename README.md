@@ -24,6 +24,8 @@ the phone faces when it has a compass sensor, plus GPS coordinates when location
 access is granted. Without a compass sensor, precise GPS can show travel
 direction while moving, but cannot tell which way the phone points while still.
 
+<img src="screenshots/radar.png" alt="Alfred Mapper 2 Wi-Fi and Bluetooth radar screen" width="360">
+
 ## Install the APK
 
 Download [`alfred-mapper2.apk`](./alfred-mapper2.apk), copy it to your Android
