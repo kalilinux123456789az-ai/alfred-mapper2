@@ -36,4 +36,27 @@ public final class ScanResultRetentionTest {
         assertTrue(results.containsKey("middle"));
         assertTrue(results.containsKey("newest"));
     }
+
+    @Test
+    public void expiresResultsAtAgeLimitButKeepsResultsOneMillisecondYounger() {
+        Map<String, Long> results = new LinkedHashMap<>();
+        results.put("at-limit", 40_000L);
+        results.put("just-younger", 40_001L);
+
+        ScanResultRetention.prune(results, 100_000L, 10, 60_000L, timestamp -> timestamp);
+
+        assertFalse(results.containsKey("at-limit"));
+        assertTrue(results.containsKey("just-younger"));
+    }
+
+    @Test
+    public void zeroResultLimitRemovesEveryEntry() {
+        Map<String, Long> results = new LinkedHashMap<>();
+        results.put("first", 10L);
+        results.put("second", 20L);
+
+        ScanResultRetention.prune(results, 20L, 0, 100L, timestamp -> timestamp);
+
+        assertTrue(results.isEmpty());
+    }
 }

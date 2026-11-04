@@ -56,6 +56,39 @@
     <string name="bluetooth_device_count">Bluetooth devices (%1$d)</string>
     <string name="bluetooth_scan_failed">Bluetooth scan failed (error %1$d). Check Bluetooth permissions.</string>
     <string name="bluetooth_scan_active_count">Bluetooth live scan · refreshed 1s · %1$d device(s).</string>
+    <string name="copy_result_hint">Tap a result to copy its details.</string>
+    <string name="copied_device_details">Copied %1$s details to clipboard.</string>
+    <string name="clipboard_unavailable">Could not access the clipboard.</string>
+    <string name="compass_mode_ready">Compass ready. Point the top of your phone forward.</string>
+    <string name="compass_sensor_unavailable">This phone does not provide a compass sensor.</string>
+    <string name="compass_sensor_gps_fallback">No compass sensor. GPS direction works only while moving with precise location.</string>
+    <string name="compass_accessibility">Compass showing the direction the top of the phone faces.</string>
+    <string name="compass_accessibility_heading">Phone points %1$s, %2$d degrees.</string>
+    <string name="gps_course_accessibility">GPS travel direction %1$s, %2$d degrees.</string>
+    <string name="compass_heading">%1$s · %2$d°</string>
+    <string name="gps_course_heading">GPS direction: %1$s · %2$d°</string>
+    <string name="compass_gps_note">The compass sensor shows magnetic direction while standing still. GPS gives your position and can report travel direction only while moving.</string>
+    <string name="gps_waiting">GPS: waiting for a location fix…</string>
+    <string name="gps_permission_required">GPS location permission is needed to show coordinates.</string>
+    <string name="gps_enable_location">Turn on Location services in phone settings.</string>
+    <string name="gps_unavailable">GPS location is unavailable on this phone.</string>
+    <string name="gps_coordinates">GPS: %1$.5f, %2$.5f</string>
+    <string name="approximate_coordinates">Approximate location: %1$.3f, %2$.3f</string>
+    <string name="gps_course_waiting">GPS course: move to detect travel direction.</string>
+    <string name="gps_course">GPS course: %1$s · %2$d°</string>
+    <string name="radar_scanning">Radar scanning nearby Wi-Fi and Bluetooth devices.</string>
+    <string name="radar_stopped">Radar stopped. Tap Start Wi-Fi + Bluetooth radar to scan again.</string>
+    <string name="radar_scan_unavailable">The Wi-Fi and Bluetooth radar could not start.</string>
+    <string name="radar_permission_denied">Wi-Fi, Bluetooth, and location permissions are needed for radar.</string>
+    <string name="background_radar_running">Wi-Fi and Bluetooth radar scan running. Tap Stop to finish.</string>
+    <string name="radar_count">RADAR: %1$d WI-FI · %2$d BLUETOOTH</string>
+    <string name="radar_legend">RED: WI-FI  ·  ORANGE: BLUETOOTH</string>
+    <string name="radar_accessibility">Nearby Wi-Fi and Bluetooth signals arranged by relative signal strength. Dot positions are illustrative, not device directions.</string>
+    <string name="radar_empty">Looking for nearby Wi-Fi and Bluetooth…</string>
+    <string name="radar_more_results">…and %1$d more. Strongest signals are shown first.</string>
+    <string name="radar_direction_note">Signals show relative strength only; this radar cannot tell which direction a device is in.</string>
+    <string name="stop_radar">Stop Wi-Fi + Bluetooth radar</string>
+    <string name="start_radar">Start Wi-Fi + Bluetooth radar</string>
     <string name="ble_not_available">Bluetooth LE scanner unavailable; trying classic Bluetooth.</string>
     <string name="bluetooth_scan_unavailable">Bluetooth scanning is unavailable. Restart Bluetooth and try again.</string>
     <string name="classic_scan_unavailable">Classic Bluetooth scan could not start; BLE scan remains active.</string>
@@ -67,4 +100,10 @@
     <string name="calibration_exponent_label">Environment factor (1–6; open 2, indoor 3)</string>
     <string name="calibration_save">Save calibration</string>
     <string name="calibration_invalid">Enter distance greater than 0 and at most 1000 m, RSSI -120–0 dBm, and environment factor 1–6.</string>
+    <string-array name="compass_directions">
+        <item>N</item><item>NNE</item><item>NE</item><item>ENE</item>
+        <item>E</item><item>ESE</item><item>SE</item><item>SSE</item>
+        <item>S</item><item>SSW</item><item>SW</item><item>WSW</item>
+        <item>W</item><item>WNW</item><item>NW</item><item>NNW</item>
+    </string-array>
 </resources>

@@ -10,9 +10,19 @@ The interface uses a red terminal-inspired style and has separate Wi-Fi and
 Bluetooth modes. Results refresh while scanning. Use **CLEAR** to stop that
 mode and clear its results. Bluetooth results unseen for 60 seconds are
 removed, and the list is capped at 200 devices to keep long scans responsive.
-Bluetooth result changes are grouped into updates at most 30 ms apart. Wi-Fi
-results appear when Android reports new scan results; Android controls and
-rate-limits how often the Wi-Fi radio can perform a scan.
+Bluetooth result changes are grouped into 250 ms updates to keep the results
+list responsive during longer scans. Wi-Fi results appear when Android reports
+new scan results; Android controls and rate-limits how often the Wi-Fi radio
+can perform a scan. Tap a result card to copy its name, identifier, and signal
+strength to the clipboard.
+
+The **COMPASS / RADAR** mode scans nearby Wi-Fi and Bluetooth devices together.
+The radar colors Wi-Fi red and Bluetooth orange, and places stronger signals
+closer to the center. Those dot positions are illustrative: signal strength
+does not reveal a device's actual direction. The same screen shows the direction
+the phone faces when it has a compass sensor, plus GPS coordinates when location
+access is granted. Without a compass sensor, precise GPS can show travel
+direction while moving, but cannot tell which way the phone points while still.
 
 ## Install the APK
 

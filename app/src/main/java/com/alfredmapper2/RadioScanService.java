@@ -29,6 +29,7 @@ import android.location.LocationManager;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -36,6 +37,7 @@ public final class RadioScanService extends Service {
     private static final String TAG = "AlfredRadioScan";
     public static final String ACTION_START_WIFI = "com.alfredmapper2.START_WIFI_SCAN";
     public static final String ACTION_START_BLUETOOTH = "com.alfredmapper2.START_BLUETOOTH_SCAN";
+    public static final String ACTION_START_RADAR = "com.alfredmapper2.START_RADAR_SCAN";
     public static final String ACTION_STOP = "com.alfredmapper2.STOP_SCAN";
     public static final String ACTION_CLEAR = "com.alfredmapper2.CLEAR_SCAN";
     public static final String ACTION_UPDATE = "com.alfredmapper2.SCAN_UPDATE";
@@ -51,11 +53,12 @@ public final class RadioScanService extends Service {
     public static final int MODE_NONE = -1;
     public static final int MODE_WIFI = 0;
     public static final int MODE_BLUETOOTH = 1;
+    public static final int MODE_RADAR = 2;
 
     private static final String CHANNEL_ID = "radio_scan";
     private static final int NOTIFICATION_ID = 24;
     private static final long REFRESH_INTERVAL_MS = 1000;
-    private static final long RESULT_UPDATE_INTERVAL_MS = 30;
+    private static final long RESULT_UPDATE_INTERVAL_MS = 250;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<String, Device> devices = new HashMap<>();
@@ -101,14 +104,21 @@ public final class RadioScanService extends Service {
         @Override
         public void run() {
             if (!active) return;
-            if (mode == MODE_BLUETOOTH) {
+            if (mode == MODE_BLUETOOTH || mode == MODE_RADAR) {
                 if (!hasBluetoothPermissions()) {
                     stopWithStatus(R.string.bluetooth_permission_denied);
                     return;
                 }
                 pruneBluetoothDevices();
                 startClassicDiscovery();
-                if (!bluetoothWarning) {
+                if (mode == MODE_RADAR) {
+                    if (!hasWifiPermissions()) {
+                        stopWithStatus(R.string.wifi_permission_denied);
+                        return;
+                    }
+                    refreshWifi();
+                }
+                if (!bluetoothWarning && mode == MODE_BLUETOOTH) {
                     status = R.string.bluetooth_scan_active_count;
                     statusCount = devices.size();
                 }
@@ -129,7 +139,7 @@ public final class RadioScanService extends Service {
         @Override
         public void run() {
             bluetoothUpdatePending = false;
-            if (active && mode == MODE_BLUETOOTH) publishUpdate();
+            if (active && (mode == MODE_BLUETOOTH || mode == MODE_RADAR)) publishUpdate();
         }
     };
 
@@ -171,6 +181,8 @@ public final class RadioScanService extends Service {
             startScan(MODE_WIFI);
         } else if (ACTION_START_BLUETOOTH.equals(action)) {
             startScan(MODE_BLUETOOTH);
+        } else if (ACTION_START_RADAR.equals(action)) {
+            startScan(MODE_RADAR);
         } else if (!active) {
             stopSelf(startId);
         } else {
@@ -197,18 +209,24 @@ public final class RadioScanService extends Service {
             stopWithStatus(R.string.bluetooth_permission_denied);
             return;
         }
-        if (requestedMode == MODE_BLUETOOTH
+        if (requestedMode == MODE_RADAR
+                && (!hasBluetoothPermissions() || !hasWifiPermissions())) {
+            stopWithStatus(R.string.radar_permission_denied);
+            return;
+        }
+        if ((requestedMode == MODE_BLUETOOTH || requestedMode == MODE_RADAR)
                 && (bluetoothAdapter == null || !bluetoothAdapter.isEnabled())) {
             stopWithStatus(bluetoothAdapter == null
                     ? R.string.no_bluetooth : R.string.turn_on_bluetooth);
             return;
         }
-        if (requestedMode == MODE_WIFI
+        if ((requestedMode == MODE_WIFI || requestedMode == MODE_RADAR)
                 && (wifiManager == null || !wifiManager.isWifiEnabled())) {
             stopWithStatus(wifiManager == null ? R.string.no_wifi : R.string.wifi_disabled);
             return;
         }
-        if (requestedMode == MODE_WIFI && !isLocationEnabled()) {
+        if ((requestedMode == MODE_WIFI || requestedMode == MODE_RADAR)
+                && !isLocationEnabled()) {
             stopWithStatus(R.string.wifi_location_disabled);
             return;
         }
@@ -219,23 +237,33 @@ public final class RadioScanService extends Service {
         sessionToken = scanSession.start();
         active = true;
         status = requestedMode == MODE_WIFI
-                ? R.string.wifi_monitor_active : R.string.scanning;
+                ? R.string.wifi_monitor_active
+                : requestedMode == MODE_RADAR ? R.string.radar_scanning : R.string.scanning;
         statusCount = requestedMode == MODE_BLUETOOTH ? 0 : -1;
         bluetoothWarning = false;
         devices.clear();
         try {
             startForegroundForMode(requestedMode);
             if (requestedMode == MODE_WIFI) startWifiScan(sessionToken);
-            else startBluetoothScan(sessionToken);
+            else if (requestedMode == MODE_BLUETOOTH) startBluetoothScan(sessionToken);
+            else {
+                registerWifiReceiver(sessionToken);
+                startBluetoothScan(sessionToken);
+                refreshWifi();
+            }
             publishUpdate();
             handler.removeCallbacks(refreshTask);
             handler.postDelayed(refreshTask, REFRESH_INTERVAL_MS);
         } catch (SecurityException exception) {
             stopWithStatus(requestedMode == MODE_WIFI
-                    ? R.string.wifi_permission_denied : R.string.bluetooth_permission_denied);
+                    ? R.string.wifi_permission_denied
+                    : requestedMode == MODE_RADAR
+                    ? R.string.radar_permission_denied : R.string.bluetooth_permission_denied);
         } catch (IllegalStateException exception) {
             stopWithStatus(requestedMode == MODE_WIFI
-                    ? R.string.wifi_scan_unavailable : R.string.bluetooth_scan_unavailable);
+                    ? R.string.wifi_scan_unavailable
+                    : requestedMode == MODE_RADAR
+                    ? R.string.radar_scan_unavailable : R.string.bluetooth_scan_unavailable);
         }
     }
 
@@ -244,6 +272,9 @@ public final class RadioScanService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             int type = requestedMode == MODE_WIFI
                     ? ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                    : requestedMode == MODE_RADAR
+                    ? ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                    | ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                     : ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE;
             startForeground(NOTIFICATION_ID, notification, type);
         } else {
@@ -257,7 +288,7 @@ public final class RadioScanService extends Service {
     }
 
     private void refreshWifi() {
-        if (!active || mode != MODE_WIFI || wifiManager == null) return;
+        if (!active || (mode != MODE_WIFI && mode != MODE_RADAR) || wifiManager == null) return;
         try {
             if (!isLocationEnabled()) {
                 status = R.string.wifi_location_disabled;
@@ -270,16 +301,17 @@ public final class RadioScanService extends Service {
             if (status == R.string.wifi_disabled
                     || status == R.string.wifi_location_disabled
                     || status == R.string.wifi_scan_unavailable) {
-                status = R.string.wifi_monitor_active;
+                status = mode == MODE_RADAR ? R.string.radar_scanning : R.string.wifi_monitor_active;
             }
             readWifiResults();
             if (!active || wifiScanPending) return;
             wifiScanPending = true;
             if (!wifiManager.startScan()) {
                 wifiScanPending = false;
-                status = R.string.wifi_scan_rate_limited;
+                status = mode == MODE_RADAR
+                        ? R.string.radar_scanning : R.string.wifi_scan_rate_limited;
             } else {
-                status = R.string.wifi_monitor_active;
+                status = mode == MODE_RADAR ? R.string.radar_scanning : R.string.wifi_monitor_active;
             }
         } catch (SecurityException exception) {
             stopWithStatus(R.string.wifi_permission_denied);
@@ -295,17 +327,29 @@ public final class RadioScanService extends Service {
             for (android.net.wifi.ScanResult result : results) {
                 String name = result.SSID == null || result.SSID.isEmpty()
                         ? getString(R.string.hidden_network) : result.SSID;
-                String key = result.BSSID == null ? name : result.BSSID;
+                String identifier = result.BSSID == null ? name : result.BSSID;
+                String key = mode == MODE_RADAR ? RadarDeviceKey.wifi(identifier) : identifier;
                 latest.put(key, new Device(
                         key,
                         name,
                         result.level,
-                        result.capabilities == null ? "Wi-Fi" : result.capabilities,
+                        mode == MODE_RADAR
+                                ? "Wi-Fi · " + (result.capabilities == null
+                                ? "Wi-Fi" : result.capabilities)
+                                : result.capabilities == null ? "Wi-Fi" : result.capabilities,
                         WifiManager.calculateSignalLevel(result.level, 100),
                         SystemClock.elapsedRealtime()));
             }
-            devices.clear();
-            devices.putAll(latest);
+            if (mode == MODE_RADAR) {
+                Iterator<String> keys = devices.keySet().iterator();
+                while (keys.hasNext()) {
+                    if (RadarDeviceKey.isWifi(keys.next())) keys.remove();
+                }
+                devices.putAll(latest);
+            } else {
+                devices.clear();
+                devices.putAll(latest);
+            }
         } catch (SecurityException exception) {
             stopWithStatus(R.string.wifi_results_permission_denied);
         }
@@ -343,7 +387,8 @@ public final class RadioScanService extends Service {
                 @Override
                 public void onScanFailed(int errorCode) {
                     handler.post(() -> {
-                        if (scanSession.accepts(token) && active && mode == MODE_BLUETOOTH) {
+                        if (scanSession.accepts(token) && active
+                                && (mode == MODE_BLUETOOTH || mode == MODE_RADAR)) {
                             bluetoothWarning = true;
                             status = R.string.bluetooth_scan_failed;
                             statusCount = errorCode;
@@ -365,7 +410,8 @@ public final class RadioScanService extends Service {
             handler.post(() -> addBleResult(result, token));
             return;
         }
-        if (!scanSession.accepts(token) || !active || mode != MODE_BLUETOOTH) return;
+        if (!scanSession.accepts(token) || !active
+                || (mode != MODE_BLUETOOTH && mode != MODE_RADAR)) return;
         try {
             BluetoothDevice device = result.getDevice();
             String name = result.getScanRecord() == null
@@ -377,14 +423,16 @@ public final class RadioScanService extends Service {
     }
 
     private void addBluetooth(String address, String name, int rssi, long token) {
-        if (!scanSession.accepts(token) || !active || mode != MODE_BLUETOOTH) return;
+        if (!scanSession.accepts(token) || !active
+                || (mode != MODE_BLUETOOTH && mode != MODE_RADAR)) return;
         long now = SystemClock.elapsedRealtime();
         pruneBluetoothDevices(now);
-        Device existing = devices.get(address);
+        String key = mode == MODE_RADAR ? RadarDeviceKey.bluetooth(address) : address;
+        Device existing = devices.get(key);
         String safeName = name == null || name.trim().isEmpty()
                 ? getString(R.string.unnamed_device) : name.trim();
         if (existing == null) {
-            devices.put(address, new Device(address, safeName, rssi, "Bluetooth", -1, now));
+            devices.put(key, new Device(key, safeName, rssi, "Bluetooth", -1, now));
         } else {
             if (existing.name.startsWith("<") && !safeName.startsWith("<")) {
                 existing.name = safeName;
@@ -413,7 +461,8 @@ public final class RadioScanService extends Service {
     }
 
     private void startClassicDiscovery() {
-        if (!active || mode != MODE_BLUETOOTH || bluetoothAdapter == null) return;
+        if (!active || (mode != MODE_BLUETOOTH && mode != MODE_RADAR)
+                || bluetoothAdapter == null) return;
         try {
             if (!bluetoothAdapter.isDiscovering()) {
                 classicDiscoveryStarted = bluetoothAdapter.startDiscovery();
@@ -438,7 +487,8 @@ public final class RadioScanService extends Service {
         bluetoothReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                if (!scanSession.accepts(token) || !active || mode != MODE_BLUETOOTH) return;
+                if (!scanSession.accepts(token) || !active
+                        || (mode != MODE_BLUETOOTH && mode != MODE_RADAR)) return;
                 if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(intent.getAction())) {
                     classicDiscoveryStarted = false;
                     return;
@@ -479,7 +529,8 @@ public final class RadioScanService extends Service {
         wifiScanReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                if (!scanSession.accepts(token) || !active || mode != MODE_WIFI
+                if (!scanSession.accepts(token) || !active
+                        || (mode != MODE_WIFI && mode != MODE_RADAR)
                         || !WifiManager.SCAN_RESULTS_AVAILABLE_ACTION.equals(intent.getAction())) return;
                 wifiScanPending = false;
                 if (!intent.getBooleanExtra(WifiManager.EXTRA_RESULTS_UPDATED, false)) {
@@ -532,7 +583,7 @@ public final class RadioScanService extends Service {
         bleScanner = null;
         bleCallback = null;
         try {
-            if (mode == MODE_BLUETOOTH && classicDiscoveryStarted
+            if ((mode == MODE_BLUETOOTH || mode == MODE_RADAR) && classicDiscoveryStarted
                     && bluetoothAdapter != null && hasBluetoothPermissions()
                     && bluetoothAdapter.isDiscovering()) {
                 bluetoothAdapter.cancelDiscovery();
@@ -642,8 +693,11 @@ public final class RadioScanService extends Service {
                 1,
                 stopIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        String description = getString(scanMode == MODE_WIFI
-                ? R.string.background_wifi_running : R.string.background_bluetooth_running);
+        int descriptionResource = scanMode == MODE_WIFI
+                ? R.string.background_wifi_running
+                : scanMode == MODE_RADAR
+                ? R.string.background_radar_running : R.string.background_bluetooth_running;
+        String description = getString(descriptionResource);
         Notification.Builder builder = Build.VERSION.SDK_INT >= 26
                 ? new Notification.Builder(this, CHANNEL_ID) : new Notification.Builder(this);
         return builder
