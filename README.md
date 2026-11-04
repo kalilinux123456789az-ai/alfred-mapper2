@@ -43,6 +43,31 @@ force-stop, permission revocation, device restart, or aggressive battery
 optimization. To prevent scanning from continuing, tap **Stop scanning** in
 the app or its notification.
 
+## Important warnings, permissions, and privacy
+
+- **A radar dot is not a direction finder.** Wi-Fi and Bluetooth signal strength
+  can suggest relative signal level, but walls, reflections, interference, and
+  device antennas affect it. The radar assigns illustrative positions; do not
+  use them to locate a device's actual bearing or exact distance.
+- **A scan can miss nearby devices.** Wi-Fi scan timing and results are limited
+  by Android. Bluetooth devices must be discoverable or advertising, and some
+  devices do not expose a name or signal strength. An empty list does not prove
+  that no devices are nearby.
+- **Permissions have platform-specific reasons.** Android may require Nearby
+  devices, Wi-Fi, Location, and notification permissions for scanning and its
+  foreground-service notification. The compass screen uses location permission
+  to display coordinates; GPS travel direction is available only while moving
+  and with precise location.
+- **Scans continue in the background until stopped.** The ongoing notification
+  shows that scanning is active. Stop it in the app or from that notification
+  when you are finished.
+- **Scan locally and responsibly.** The app does not connect to Wi-Fi networks
+  or pair with Bluetooth devices. It does not request Internet access, and scan
+  results are not uploaded by the app. Calibration settings are stored on the
+  phone. Tapping a result copies its name, identifier, and signal strength to
+  the clipboard, where other apps with clipboard access may be able to read it.
+  Scan only in places and situations where you are authorized to do so.
+
 ## Build from source
 
 Requirements:
