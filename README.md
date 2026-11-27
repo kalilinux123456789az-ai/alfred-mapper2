@@ -10,6 +10,10 @@ The interface uses a red terminal-inspired style and has separate Wi-Fi and
 Bluetooth modes. Results refresh while scanning. Use **CLEAR** to stop that
 mode and clear its results. Bluetooth results unseen for 60 seconds are
 removed, and the list is capped at 200 devices to keep long scans responsive.
+Use **COPY / SHARE** to copy the complete current Wi-Fi or Bluetooth result
+list to the clipboard or share it through another app.
+The same action is available in the Compass / Radar view for combined radar
+results.
 Bluetooth result changes are grouped into 250 ms updates to keep the results
 list responsive during longer scans. Wi-Fi results appear when Android reports
 new scan results; Android controls and rate-limits how often the Wi-Fi radio
@@ -23,8 +27,6 @@ does not reveal a device's actual direction. The same screen shows the direction
 the phone faces when it has a compass sensor, plus GPS coordinates when location
 access is granted. Without a compass sensor, precise GPS can show travel
 direction while moving, but cannot tell which way the phone points while still.
-
-<img src="screenshots/radar.png" alt="Alfred Mapper 2 Wi-Fi and Bluetooth radar screen" width="360">
 
 ## Install the APK
 
@@ -42,31 +44,6 @@ Android or the phone manufacturer may still stop background work after a
 force-stop, permission revocation, device restart, or aggressive battery
 optimization. To prevent scanning from continuing, tap **Stop scanning** in
 the app or its notification.
-
-## Important warnings, permissions, and privacy
-
-- **A radar dot is not a direction finder.** Wi-Fi and Bluetooth signal strength
-  can suggest relative signal level, but walls, reflections, interference, and
-  device antennas affect it. The radar assigns illustrative positions; do not
-  use them to locate a device's actual bearing or exact distance.
-- **A scan can miss nearby devices.** Wi-Fi scan timing and results are limited
-  by Android. Bluetooth devices must be discoverable or advertising, and some
-  devices do not expose a name or signal strength. An empty list does not prove
-  that no devices are nearby.
-- **Permissions have platform-specific reasons.** Android may require Nearby
-  devices, Wi-Fi, Location, and notification permissions for scanning and its
-  foreground-service notification. The compass screen uses location permission
-  to display coordinates; GPS travel direction is available only while moving
-  and with precise location.
-- **Scans continue in the background until stopped.** The ongoing notification
-  shows that scanning is active. Stop it in the app or from that notification
-  when you are finished.
-- **Scan locally and responsibly.** The app does not connect to Wi-Fi networks
-  or pair with Bluetooth devices. It does not request Internet access, and scan
-  results are not uploaded by the app. Calibration settings are stored on the
-  phone. Tapping a result copies its name, identifier, and signal strength to
-  the clipboard, where other apps with clipboard access may be able to read it.
-  Scan only in places and situations where you are authorized to do so.
 
 ## Build from source
 
@@ -102,6 +79,18 @@ The displayed distance is an approximate RSSI estimate, not an exact
 measurement. Indoor reflections, walls, interference, antenna orientation, and
 differences between devices can make it inaccurate. Some Bluetooth devices do
 not report signal strength, so their distance cannot be estimated.
+
+The app includes a small on-device Offline Robot that reduces RSSI noise by
+keeping a short median history for each discovered Wi-Fi or Bluetooth device.
+It does not use a cloud model or send scan data anywhere. The app has no
+Internet permission, and Android backup for calibration is disabled.
+Each estimate also shows an offline confidence score based on sample count and
+RSSI stability. Low confidence means the environment is unstable or too little
+data was collected; it does not mean the distance is exact.
+The display has a static, battery-friendly terminal scanline effect. It can be
+disabled from the **CRT EFFECT** button without changing scanner behavior.
+Radar drawing reuses its result list and label paint to reduce garbage
+collection pauses and keep the interface responsive during longer scans.
 
 For a more useful estimate, scan a device at a measured distance and use
 **CALIBRATE DISTANCE** to save that distance and its displayed RSSI. Choose an

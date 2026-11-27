@@ -50,6 +50,7 @@ public final class RadioScanService extends Service {
     public static final String EXTRA_RSSI = "rssi";
     public static final String EXTRA_SIGNAL = "signal";
     public static final String EXTRA_STATUS_COUNT = "status_count";
+    public static final String EXTRA_SESSION_TOKEN = "session_token";
     public static final int MODE_NONE = -1;
     public static final int MODE_WIFI = 0;
     public static final int MODE_BLUETOOTH = 1;
@@ -200,7 +201,7 @@ public final class RadioScanService extends Service {
             publishUpdate();
             return;
         }
-        if (!active) sessionMode = requestedMode;
+        sessionMode = requestedMode;
         if (requestedMode == MODE_WIFI && !hasWifiPermissions()) {
             stopWithStatus(R.string.wifi_permission_denied);
             return;
@@ -325,9 +326,12 @@ public final class RadioScanService extends Service {
             List<android.net.wifi.ScanResult> results = wifiManager.getScanResults();
             Map<String, Device> latest = new HashMap<>();
             for (android.net.wifi.ScanResult result : results) {
-                String name = result.SSID == null || result.SSID.isEmpty()
-                        ? getString(R.string.hidden_network) : result.SSID;
-                String identifier = result.BSSID == null ? name : result.BSSID;
+                String name = ScanInputSanitizer.sanitizeName(
+                        result.SSID,
+                        getString(R.string.hidden_network));
+                String identifier = result.BSSID == null
+                        ? name : ScanInputSanitizer.sanitizeName(
+                                result.BSSID, name);
                 String key = mode == MODE_RADAR ? RadarDeviceKey.wifi(identifier) : identifier;
                 latest.put(key, new Device(
                         key,
@@ -346,9 +350,17 @@ public final class RadioScanService extends Service {
                     if (RadarDeviceKey.isWifi(keys.next())) keys.remove();
                 }
                 devices.putAll(latest);
+                ScanResultRetention.limitSize(
+                        devices,
+                        ScanResultRetention.MAX_RADIO_RESULTS,
+                        device -> device.lastSeenAt);
             } else {
                 devices.clear();
                 devices.putAll(latest);
+                ScanResultRetention.limitSize(
+                        devices,
+                        ScanResultRetention.MAX_RADIO_RESULTS,
+                        device -> device.lastSeenAt);
             }
         } catch (SecurityException exception) {
             stopWithStatus(R.string.wifi_results_permission_denied);
@@ -425,18 +437,22 @@ public final class RadioScanService extends Service {
     private void addBluetooth(String address, String name, int rssi, long token) {
         if (!scanSession.accepts(token) || !active
                 || (mode != MODE_BLUETOOTH && mode != MODE_RADAR)) return;
+        if (!ScanInputSanitizer.isValidBluetoothAddress(address)
+                || !ScanInputSanitizer.isValidRssi(rssi)) return;
         long now = SystemClock.elapsedRealtime();
         pruneBluetoothDevices(now);
         String key = mode == MODE_RADAR ? RadarDeviceKey.bluetooth(address) : address;
         Device existing = devices.get(key);
-        String safeName = name == null || name.trim().isEmpty()
-                ? getString(R.string.unnamed_device) : name.trim();
+        String safeName = ScanInputSanitizer.sanitizeName(
+                name,
+                getString(R.string.unnamed_device));
         if (existing == null) {
             devices.put(key, new Device(key, safeName, rssi, "Bluetooth", -1, now));
         } else {
-            if (existing.name.startsWith("<") && !safeName.startsWith("<")) {
-                existing.name = safeName;
-            }
+            existing.name = BluetoothDeviceName.preferKnownName(
+                    existing.name,
+                    safeName,
+                    getString(R.string.unnamed_device));
             existing.rssi = rssi;
             existing.lastSeenAt = now;
         }
@@ -516,7 +532,7 @@ public final class RadioScanService extends Service {
             }
         };
         if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(bluetoothReceiver, filter, Context.RECEIVER_EXPORTED);
+            registerReceiver(bluetoothReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(bluetoothReceiver, filter);
         }
@@ -543,7 +559,7 @@ public final class RadioScanService extends Service {
             }
         };
         if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(wifiScanReceiver, filter, Context.RECEIVER_EXPORTED);
+            registerReceiver(wifiScanReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(wifiScanReceiver, filter);
         }
@@ -664,6 +680,7 @@ public final class RadioScanService extends Service {
         update.putExtra(EXTRA_MODE, active ? mode : sessionMode);
         update.putExtra(EXTRA_STATUS, status);
         update.putExtra(EXTRA_STATUS_COUNT, statusCount);
+        update.putExtra(EXTRA_SESSION_TOKEN, sessionToken);
         List<Device> sorted = new ArrayList<>(devices.values());
         String[] keys = new String[sorted.size()];
         String[] names = new String[sorted.size()];
@@ -724,11 +741,18 @@ public final class RadioScanService extends Service {
     @Override
     public void onTaskRemoved(Intent rootIntent) {
         super.onTaskRemoved(rootIntent);
+        stopWithStatus(R.string.scanning_stopped);
     }
 
     @Override
     public void onDestroy() {
         stopHardwareScan();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE);
+        } else {
+            stopForeground(true);
+        }
+        stopSelf();
         super.onDestroy();
     }
 }
