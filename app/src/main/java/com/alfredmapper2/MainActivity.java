@@ -48,6 +48,8 @@ import java.util.Map;
 public final class MainActivity extends Activity {
     private static final int REQUEST_PERMISSIONS = 100;
     private static final String DISTANCE_PREFERENCES = "distance_calibration";
+    private static final String DISPLAY_PREFERENCES = "display_settings";
+    private static final String CRT_EFFECT_KEY = "crt_effect_enabled";
     private static final String REFERENCE_RSSI_KEY = "reference_rssi";
     private static final String REFERENCE_DISTANCE_KEY = "reference_distance";
     private static final String PATH_LOSS_KEY = "path_loss_exponent";
@@ -61,6 +63,8 @@ public final class MainActivity extends Activity {
     private final Map<String, RadioItem> bluetoothItems = new HashMap<>();
     private final Map<String, RadioItem> wifiItems = new HashMap<>();
     private final Map<String, RadioItem> radarItems = new HashMap<>();
+    private final OfflineDistanceRobot offlineDistanceRobot =
+            new OfflineDistanceRobot();
     private LinearLayout wifiPanel;
     private LinearLayout bluetoothPanel;
     private LinearLayout compassPanel;
@@ -80,6 +84,7 @@ public final class MainActivity extends Activity {
     private Button bluetoothModeButton;
     private Button compassModeButton;
     private Button radarScanButton;
+    private Button crtEffectButton;
     private CompassView compassView;
     private RadarView radarView;
     private SensorManager sensorManager;
@@ -98,6 +103,8 @@ public final class MainActivity extends Activity {
     private boolean locationUpdatesRegistered;
     private boolean preciseLocation;
     private float compassHeading = Float.NaN;
+    private Location lastGpsCourseLocation;
+    private long activeSessionToken = -1;
     private RadioScanService scanService;
 
     private final class CompassView extends View {
@@ -227,6 +234,8 @@ public final class MainActivity extends Activity {
         private final Paint bluetoothPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Paint centerPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final List<RadioItem> items = new ArrayList<>();
+        private final List<RadioItem> sortedItems = new ArrayList<>(32);
+        private final Paint labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
 
         RadarView(Context context) {
             super(context);
@@ -238,6 +247,7 @@ public final class MainActivity extends Activity {
             wifiPaint.setColor(COLOR_ACCENT);
             bluetoothPaint.setColor(Color.rgb(255, 170, 80));
             centerPaint.setColor(COLOR_TEXT);
+            labelPaint.setAntiAlias(true);
         }
 
         void setItems(List<RadioItem> results) {
@@ -259,16 +269,16 @@ public final class MainActivity extends Activity {
             canvas.drawLine(centerX, centerY - radius, centerX, centerY + radius, axisPaint);
             canvas.drawCircle(centerX, centerY, dp(3), centerPaint);
 
-            List<RadioItem> sorted = new ArrayList<>(items);
-            Collections.sort(sorted, (first, second) -> {
+            sortedItems.clear();
+            sortedItems.addAll(items);
+            Collections.sort(sortedItems, (first, second) -> {
                 int signalOrder = Integer.compare(second.rssi, first.rssi);
                 return signalOrder != 0 ? signalOrder : first.key.compareTo(second.key);
             });
             float labelSize = Math.max(dp(9), Math.min(dp(11), radius / 14f));
-            Paint labelPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
             labelPaint.setTextSize(labelSize);
-            for (int i = 0; i < Math.min(sorted.size(), 18); i++) {
-                RadioItem item = sorted.get(i);
+            for (int i = 0; i < Math.min(sortedItems.size(), 18); i++) {
+                RadioItem item = sortedItems.get(i);
                 float distance = radius * RadarProjection.radiusFractionForRssi(item.rssi);
                 float angle = RadarProjection.angleDegreesForKey(item.key)
                         * (float) Math.PI / 180f;
@@ -404,6 +414,7 @@ public final class MainActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(20), dp(28), dp(20), dp(28));
         root.setBackgroundColor(COLOR_BACKGROUND);
+        applyCrtEffect(root);
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             root.setPadding(
                     dp(20),
@@ -422,6 +433,14 @@ public final class MainActivity extends Activity {
         TextView developer = text("> DEVELOPER: TAMBET SARAPU", 11, COLOR_MUTED, false);
         developer.setPadding(0, 0, 0, dp(18));
         root.addView(developer);
+        crtEffectButton = button(
+                getString(R.string.crt_effect_on),
+                COLOR_CARD,
+                COLOR_TEXT);
+        crtEffectButton.setOnClickListener(v -> toggleCrtEffect(root));
+        updateCrtEffectButton();
+        root.addView(crtEffectButton, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(44)));
 
         LinearLayout modes = new LinearLayout(this);
         modes.setOrientation(LinearLayout.HORIZONTAL);
@@ -460,7 +479,8 @@ public final class MainActivity extends Activity {
         compassPanel.addView(radarView, radarParams);
         TextView radarLegend = text(
                 getString(R.string.radar_legend) + "\n"
-                        + getString(R.string.radar_direction_note),
+                        + getString(R.string.radar_direction_note) + "\n"
+                        + getString(R.string.offline_robot_note),
                 11,
                 COLOR_MUTED,
                 false);
@@ -475,8 +495,16 @@ public final class MainActivity extends Activity {
             if (scanning && wifiScanning) stopScan();
             else requestCompassLocation();
         });
-        compassPanel.addView(radarScanButton, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
+        LinearLayout radarControls = new LinearLayout(this);
+        radarControls.setOrientation(LinearLayout.HORIZONTAL);
+        radarControls.addView(radarScanButton, new LinearLayout.LayoutParams(0, dp(48), 1));
+        Button copyRadarButton = button("[ COPY / SHARE ]", COLOR_CARD, COLOR_TEXT);
+        copyRadarButton.setOnClickListener(v -> showRadarResultActions());
+        LinearLayout.LayoutParams copyRadarParams =
+                new LinearLayout.LayoutParams(0, dp(48), 1);
+        copyRadarParams.setMargins(dp(8), 0, 0, 0);
+        radarControls.addView(copyRadarButton, copyRadarParams);
+        compassPanel.addView(radarControls);
         compassView = new CompassView(this);
         compassView.setContentDescription(getString(R.string.compass_accessibility));
         LinearLayout.LayoutParams compassViewParams = new LinearLayout.LayoutParams(
@@ -508,6 +536,11 @@ public final class MainActivity extends Activity {
             else requestPermissionsAndScanWifi();
         });
         wifiControls.addView(wifiScanButton, new LinearLayout.LayoutParams(0, dp(48), 1));
+        Button copyWifiButton = button("[ COPY / SHARE ]", COLOR_CARD, COLOR_TEXT);
+        copyWifiButton.setOnClickListener(v -> showResultActions(wifiItems, true));
+        LinearLayout.LayoutParams copyWifiParams = new LinearLayout.LayoutParams(0, dp(48), 1);
+        copyWifiParams.setMargins(dp(8), 0, 0, 0);
+        wifiControls.addView(copyWifiButton, copyWifiParams);
         Button clearWifiButton = button("[ CLEAR ]", COLOR_CARD, COLOR_TEXT);
         clearWifiButton.setOnClickListener(v -> clearResults(RadioScanService.MODE_WIFI));
         LinearLayout.LayoutParams clearWifiParams = new LinearLayout.LayoutParams(0, dp(48), 1);
@@ -533,6 +566,12 @@ public final class MainActivity extends Activity {
             else requestPermissionsAndStart();
         });
         bluetoothControls.addView(scanButton, new LinearLayout.LayoutParams(0, dp(48), 1));
+        Button copyBluetoothButton = button("[ COPY / SHARE ]", COLOR_CARD, COLOR_TEXT);
+        copyBluetoothButton.setOnClickListener(v -> showResultActions(bluetoothItems, false));
+        LinearLayout.LayoutParams copyBluetoothParams =
+                new LinearLayout.LayoutParams(0, dp(48), 1);
+        copyBluetoothParams.setMargins(dp(8), 0, 0, 0);
+        bluetoothControls.addView(copyBluetoothButton, copyBluetoothParams);
         Button clearBluetoothButton = button("[ CLEAR ]", COLOR_CARD, COLOR_TEXT);
         clearBluetoothButton.setOnClickListener(v -> clearResults(RadioScanService.MODE_BLUETOOTH));
         LinearLayout.LayoutParams clearBluetoothParams =
@@ -561,6 +600,34 @@ public final class MainActivity extends Activity {
         root.addView(calibrateDistanceButton, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(48)));
         updateModeViews();
+    }
+
+    private void toggleCrtEffect(View root) {
+        android.content.SharedPreferences preferences =
+                getSharedPreferences(DISPLAY_PREFERENCES, MODE_PRIVATE);
+        boolean enabled = !preferences.getBoolean(CRT_EFFECT_KEY, true);
+        preferences.edit().putBoolean(CRT_EFFECT_KEY, enabled).apply();
+        applyCrtEffect(root);
+        updateCrtEffectButton();
+    }
+
+    private void applyCrtEffect(View root) {
+        android.content.SharedPreferences preferences =
+                getSharedPreferences(DISPLAY_PREFERENCES, MODE_PRIVATE);
+        boolean enabled = preferences.getBoolean(CRT_EFFECT_KEY, true);
+        root.setForeground(enabled
+                ? getDrawable(R.drawable.screen_scanlines)
+                : null);
+    }
+
+    private void updateCrtEffectButton() {
+        if (crtEffectButton == null) return;
+        android.content.SharedPreferences preferences =
+                getSharedPreferences(DISPLAY_PREFERENCES, MODE_PRIVATE);
+        boolean enabled = preferences.getBoolean(CRT_EFFECT_KEY, true);
+        crtEffectButton.setText(enabled
+                ? R.string.crt_effect_on
+                : R.string.crt_effect_off);
     }
 
     private void showMode(int mode) {
@@ -732,6 +799,7 @@ public final class MainActivity extends Activity {
             locationManager.removeUpdates(locationListener);
         }
         locationUpdatesRegistered = false;
+        lastGpsCourseLocation = null;
     }
 
     private void updateLocation(Location location) {
@@ -741,10 +809,13 @@ public final class MainActivity extends Activity {
         locationView.setText(getString(
                 preciseLocation ? R.string.gps_coordinates : R.string.approximate_coordinates,
                 location.getLatitude(), location.getLongitude()));
-        if (preciseLocation && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                && location.hasSpeed() && location.getSpeed() >= 0.5f
-                && location.hasBearing()) {
-            float bearing = location.getBearing();
+        boolean courseAvailable = courseAvailability(location, lastGpsCourseLocation);
+        Float course = CompassCourse.fromLocation(location, lastGpsCourseLocation);
+        lastGpsCourseLocation = location;
+        if (preciseLocation
+                && course != null
+                && courseAvailable) {
+            float bearing = course;
             String[] directions = getResources().getStringArray(R.array.compass_directions);
             int index = Math.round(bearing / 22.5f) % directions.length;
             int roundedBearing = Math.round(bearing) % 360;
@@ -773,6 +844,15 @@ public final class MainActivity extends Activity {
                 == PackageManager.PERMISSION_GRANTED
                 || checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean courseAvailability(Location location, Location previous) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                && location.hasSpeed() && location.getSpeed() >= 0.5f) {
+            return true;
+        }
+        return previous != null
+                && location.distanceTo(previous) >= 8f;
     }
 
     private void updateCompassHeading() {
@@ -918,7 +998,11 @@ public final class MainActivity extends Activity {
         permissionRequestMode = -1;
         Intent intent = new Intent(this, RadioScanService.class)
                 .setAction(RadioScanService.ACTION_STOP);
-        startService(intent);
+        try {
+            startService(intent);
+        } catch (SecurityException | IllegalStateException exception) {
+            statusView.setText(R.string.bluetooth_scan_unavailable);
+        }
     }
 
     private void clearResults(int mode) {
@@ -926,7 +1010,13 @@ public final class MainActivity extends Activity {
         Intent intent = new Intent(this, RadioScanService.class)
                 .setAction(RadioScanService.ACTION_CLEAR)
                 .putExtra(RadioScanService.EXTRA_MODE, mode);
-        startService(intent);
+        try {
+            startService(intent);
+        } catch (SecurityException | IllegalStateException exception) {
+            statusView.setText(R.string.permission_denied);
+            return;
+        }
+        offlineDistanceRobot.clear(mode == RadioScanService.MODE_WIFI);
         Map<String, RadioItem> items = mode == RadioScanService.MODE_WIFI
                 ? wifiItems : bluetoothItems;
         items.clear();
@@ -943,6 +1033,15 @@ public final class MainActivity extends Activity {
 
     private void applyScanUpdate(Intent update) {
         boolean active = update.getBooleanExtra(RadioScanService.EXTRA_ACTIVE, false);
+        long sessionToken = update.getLongExtra(
+                RadioScanService.EXTRA_SESSION_TOKEN, -1);
+        if (sessionToken >= 0) {
+            if (active) {
+                activeSessionToken = sessionToken;
+            } else if (activeSessionToken >= 0 && sessionToken != activeSessionToken) {
+                return;
+            }
+        }
         notificationPermissionMissing = Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED;
@@ -993,10 +1092,6 @@ public final class MainActivity extends Activity {
                     || updateMode == RadioScanService.MODE_RADAR;
             wifiScanning = updateMode == RadioScanService.MODE_WIFI
                     || updateMode == RadioScanService.MODE_RADAR;
-            if (currentMode != updateMode && currentMode != MODE_COMPASS) {
-                currentMode = updateMode;
-                updateModeViews();
-            }
         } else {
             if (activeMode == RadioScanService.MODE_BLUETOOTH) scanning = false;
             if (activeMode == RadioScanService.MODE_WIFI) wifiScanning = false;
@@ -1033,6 +1128,7 @@ public final class MainActivity extends Activity {
 
     private void renderRadarItems() {
         List<RadioItem> items = new ArrayList<>(radarItems.values());
+        List<String> spokenSignals = new ArrayList<>();
         int wifiCount = 0;
         int bluetoothCount = 0;
         Collections.sort(items,
@@ -1044,6 +1140,13 @@ public final class MainActivity extends Activity {
             boolean wifi = RadarDeviceKey.isWifi(item.key);
             if (wifi) wifiCount++;
             else bluetoothCount++;
+            if (spokenSignals.size() < 3) {
+                spokenSignals.add(getString(
+                        wifi ? R.string.radar_accessibility_wifi_item
+                                : R.string.radar_accessibility_bluetooth_item,
+                        item.name,
+                        item.rssi));
+            }
             if (i < visibleCount) {
                 summary.append(wifi ? "WIFI  " : "BT    ")
                         .append(item.name)
@@ -1053,6 +1156,17 @@ public final class MainActivity extends Activity {
         radarView.setItems(items);
         radarCountView.setText(getString(
                 R.string.radar_count, wifiCount, bluetoothCount));
+        String moreSignals = items.size() > spokenSignals.size()
+                ? getString(
+                        R.string.radar_accessibility_more,
+                        items.size() - spokenSignals.size())
+                : "";
+        radarView.setContentDescription(RadarAccessibilityDescription.build(
+                getString(R.string.radar_accessibility),
+                getString(R.string.radar_accessibility_counts, wifiCount, bluetoothCount),
+                spokenSignals,
+                getString(R.string.radar_accessibility_empty),
+                moreSignals));
         if (summary.length() == 0) {
             radarResultsView.setText(R.string.radar_empty);
         } else {
@@ -1088,7 +1202,7 @@ public final class MainActivity extends Activity {
             String signal = wifi
                     ? item.signalPercent + "% signal · " + item.rssi + " dBm"
                     : item.rssi + " dBm RSSI";
-            card.addView(text(signal + " · " + estimateDistance(item.rssi, wifi),
+            card.addView(text(signal + " · " + estimateDistance(item, wifi),
                     12, COLOR_ACCENT, false));
             card.addView(text(wifi ? item.detail + " · " + item.key : item.key,
                     11, COLOR_MUTED, false));
@@ -1116,7 +1230,118 @@ public final class MainActivity extends Activity {
                 .show();
     }
 
-    private String estimateDistance(int rssi, boolean wifi) {
+    private void copyAllItems(Map<String, RadioItem> items, boolean wifi) {
+        if (items.isEmpty()) {
+            Toast.makeText(this, R.string.no_results_to_copy, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        String summary = buildResultSummary(items, wifi);
+        ClipboardManager clipboard =
+                (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard == null) {
+            Toast.makeText(this, R.string.clipboard_unavailable, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText(
+                wifi ? "Wi-Fi results" : "Bluetooth results", summary));
+        Toast.makeText(
+                this,
+                getString(R.string.copied_all_results, items.size()),
+                Toast.LENGTH_SHORT)
+                .show();
+    }
+
+    private void showResultActions(Map<String, RadioItem> items, boolean wifi) {
+        if (items.isEmpty()) {
+            Toast.makeText(this, R.string.no_results_to_copy, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(wifi ? R.string.wifi_results_actions : R.string.bluetooth_results_actions)
+                .setItems(new CharSequence[]{
+                        getString(R.string.copy_all_action),
+                        getString(R.string.share_all_action)
+                }, (dialog, which) -> {
+                    if (which == 0) copyAllItems(items, wifi);
+                    else shareAllItems(items, wifi);
+                })
+                .show();
+    }
+
+    private void shareAllItems(Map<String, RadioItem> items, boolean wifi) {
+        Intent share = new Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT,
+                        wifi ? "Alfred Mapper 2 Wi-Fi results"
+                                : "Alfred Mapper 2 Bluetooth results")
+                .putExtra(Intent.EXTRA_TEXT, buildResultSummary(items, wifi));
+        startActivity(Intent.createChooser(
+                share,
+                getString(R.string.share_all_chooser)));
+    }
+
+    private void showRadarResultActions() {
+        if (radarItems.isEmpty()) {
+            Toast.makeText(this, R.string.no_results_to_copy, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+                .setTitle(R.string.radar_results_actions)
+                .setItems(new CharSequence[]{
+                        getString(R.string.copy_all_action),
+                        getString(R.string.share_all_action)
+                }, (dialog, which) -> {
+                    if (which == 0) copyRadarItems();
+                    else shareRadarItems();
+                })
+                .show();
+    }
+
+    private void copyRadarItems() {
+        ClipboardManager clipboard =
+                (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard == null) {
+            Toast.makeText(this, R.string.clipboard_unavailable, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        clipboard.setPrimaryClip(ClipData.newPlainText(
+                "Radar results", buildRadarResultSummary()));
+        Toast.makeText(
+                this,
+                getString(R.string.copied_all_results, radarItems.size()),
+                Toast.LENGTH_SHORT)
+                .show();
+    }
+
+    private void shareRadarItems() {
+        Intent share = new Intent(Intent.ACTION_SEND)
+                .setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, "Alfred Mapper 2 radar results")
+                .putExtra(Intent.EXTRA_TEXT, buildRadarResultSummary());
+        startActivity(Intent.createChooser(
+                share,
+                getString(R.string.share_all_chooser)));
+    }
+
+    private String buildRadarResultSummary() {
+        List<ScanResultSummary.Entry> entries = new ArrayList<>();
+        for (RadioItem item : radarItems.values()) {
+            entries.add(new ScanResultSummary.Entry(
+                    item.name, item.key, item.detail, item.rssi));
+        }
+        return ScanResultSummary.buildRadar(entries);
+    }
+
+    private String buildResultSummary(Map<String, RadioItem> items, boolean wifi) {
+        List<ScanResultSummary.Entry> entries = new ArrayList<>();
+        for (RadioItem item : items.values()) {
+            entries.add(new ScanResultSummary.Entry(
+                    item.name, item.key, item.detail, item.rssi));
+        }
+        return ScanResultSummary.build(entries, wifi);
+    }
+
+    private String estimateDistance(RadioItem item, boolean wifi) {
         android.content.SharedPreferences preferences = distancePreferences();
         int referenceRssi = preferences.getInt(
                 distancePreferenceKey(REFERENCE_RSSI_KEY, wifi),
@@ -1127,10 +1352,28 @@ public final class MainActivity extends Activity {
         double pathLossExponent = Double.longBitsToDouble(preferences.getLong(
                 distancePreferenceKey(PATH_LOSS_KEY, wifi),
                 Double.doubleToRawLongBits(DistanceEstimator.DEFAULT_PATH_LOSS_EXPONENT)));
-        double distance = DistanceEstimator.estimateMeters(
-                rssi, referenceRssi, referenceDistance, pathLossExponent);
+        OfflineDistanceRobot.Estimate estimate = offlineDistanceRobot.estimateMeters(
+                item.key,
+                wifi,
+                item.rssi,
+                referenceRssi,
+                referenceDistance,
+                pathLossExponent);
         return String.format(
-                Locale.getDefault(), "≈ %.2f m (estimate)", distance);
+                Locale.getDefault(),
+                "≈ %.2f m · %s · Offline · %d%% confidence",
+                estimate.meters,
+                rangeLabelForDisplay(estimate.meters),
+                estimate.confidencePercent);
+    }
+
+    private String rangeLabelForDisplay(double meters) {
+        String band = OfflineDistanceRobot.rangeLabel(meters);
+        if ("very close".equals(band)) return getString(R.string.range_very_close);
+        if ("near".equals(band)) return getString(R.string.range_near);
+        if ("medium".equals(band)) return getString(R.string.range_medium);
+        if ("far".equals(band)) return getString(R.string.range_far);
+        return getString(R.string.range_unknown);
     }
 
     private void showDistanceCalibration() {
